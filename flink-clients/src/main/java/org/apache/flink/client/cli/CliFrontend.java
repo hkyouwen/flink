@@ -180,34 +180,34 @@ public class CliFrontend {
 	protected void run(String[] args) throws Exception {
 		LOG.info("Running 'run' command.");
 
-		final Options commandOptions = CliFrontendParser.getRunCommandOptions();
+		final Options commandOptions = CliFrontendParser.getRunCommandOptions(); //添加基本命令，如-h, -v, -s ,-p等
 
-		final Options commandLineOptions = CliFrontendParser.mergeOptions(commandOptions, customCommandLineOptions);
+		final Options commandLineOptions = CliFrontendParser.mergeOptions(commandOptions, customCommandLineOptions); //合并Options， customCommandLineOptions=new Option()
 
-		final CommandLine commandLine = CliFrontendParser.parse(commandLineOptions, args, true);
+		final CommandLine commandLine = CliFrontendParser.parse(commandLineOptions, args, true); //根据定义的commandLineOptions解析输入的args，生成CommandLine
 
-		final RunOptions runOptions = new RunOptions(commandLine);
+		final RunOptions runOptions = new RunOptions(commandLine); //RunOptions为ProgramOptions子类，根据commandLine得到jarFilePath，savepointSettings等基本信息
 
 		// evaluate help flag
-		if (runOptions.isPrintHelp()) {
+		if (runOptions.isPrintHelp()) {     //包含-h参数，则打印帮助并返回
 			CliFrontendParser.printHelpForRun(customCommandLines);
 			return;
 		}
 
-		if (runOptions.getJarFilePath() == null) {
+		if (runOptions.getJarFilePath() == null) {  //未传入JarFilePath
 			throw new CliArgsException("The program JAR file was not specified.");
 		}
 
 		final PackagedProgram program;
 		try {
 			LOG.info("Building program from JAR file");
-			program = buildProgram(runOptions);
+			program = buildProgram(runOptions); //构建PackagedProgram
 		}
 		catch (FileNotFoundException e) {
 			throw new CliArgsException("Could not build the program from JAR file.", e);
 		}
 
-		final CustomCommandLine<?> customCommandLine = getActiveCustomCommandLine(commandLine);
+		final CustomCommandLine<?> customCommandLine = getActiveCustomCommandLine(commandLine); //根据当前环境选择是yarncli还是defaultcli
 
 		try {
 			runProgram(customCommandLine, commandLine, runOptions, program);
@@ -221,10 +221,10 @@ public class CliFrontend {
 			CommandLine commandLine,
 			RunOptions runOptions,
 			PackagedProgram program) throws ProgramInvocationException, FlinkException {
-		final ClusterDescriptor<T> clusterDescriptor = customCommandLine.createClusterDescriptor(commandLine);
+		final ClusterDescriptor<T> clusterDescriptor = customCommandLine.createClusterDescriptor(commandLine); //创建ClusterDescriptor
 
 		try {
-			final T clusterId = customCommandLine.getClusterId(commandLine);
+			final T clusterId = customCommandLine.getClusterId(commandLine); //是否传入-c 集群id信息
 
 			final ClusterClient<T> client;
 
@@ -232,10 +232,10 @@ public class CliFrontend {
 			if (clusterId == null && runOptions.getDetachedMode()) {
 				int parallelism = runOptions.getParallelism() == -1 ? defaultParallelism : runOptions.getParallelism();
 
-				final JobGraph jobGraph = PackagedProgramUtils.createJobGraph(program, configuration, parallelism);
+				final JobGraph jobGraph = PackagedProgramUtils.createJobGraph(program, configuration, parallelism); //生成JobGraph
 
 				final ClusterSpecification clusterSpecification = customCommandLine.getClusterSpecification(commandLine);
-				client = clusterDescriptor.deployJobCluster(
+				client = clusterDescriptor.deployJobCluster( //detach模式提交后直接退出，所以根据jobGraph直接启动cluster
 					clusterSpecification,
 					jobGraph,
 					runOptions.getDetachedMode());
@@ -243,23 +243,23 @@ public class CliFrontend {
 				logAndSysout("Job has been submitted with JobID " + jobGraph.getJobID());
 
 				try {
-					client.shutdown();
+					client.shutdown(); //detach模式，直接关闭client
 				} catch (Exception e) {
 					LOG.info("Could not properly shut down the client.", e);
 				}
 			} else {
 				final Thread shutdownHook;
 				if (clusterId != null) {
-					client = clusterDescriptor.retrieve(clusterId);
+					client = clusterDescriptor.retrieve(clusterId); //clusterId存在，直接获取当前client
 					shutdownHook = null;
 				} else {
 					// also in job mode we have to deploy a session cluster because the job
 					// might consist of multiple parts (e.g. when using collect)
 					final ClusterSpecification clusterSpecification = customCommandLine.getClusterSpecification(commandLine);
-					client = clusterDescriptor.deploySessionCluster(clusterSpecification);
+					client = clusterDescriptor.deploySessionCluster(clusterSpecification); //先启动session cluster，暂时无job
 					// if not running in detached mode, add a shutdown hook to shut down cluster if client exits
 					// there's a race-condition here if cli is killed before shutdown hook is installed
-					if (!runOptions.getDetachedMode() && runOptions.isShutdownOnAttachedExit()) {
+					if (!runOptions.getDetachedMode() && runOptions.isShutdownOnAttachedExit()) { //cli is killed before shutdown hook is installed，退出client
 						shutdownHook = ShutdownHookUtil.addShutdownHook(client::shutDownCluster, client.getClass().getSimpleName(), LOG);
 					} else {
 						shutdownHook = null;
@@ -268,14 +268,14 @@ public class CliFrontend {
 
 				try {
 					client.setPrintStatusDuringExecution(runOptions.getStdoutLogging());
-					client.setDetached(runOptions.getDetachedMode());
+					client.setDetached(runOptions.getDetachedMode()); //是否detach
 					LOG.debug("Client slots is set to {}", client.getMaxSlots());
 
 					LOG.debug("{}", runOptions.getSavepointRestoreSettings());
 
 					int userParallelism = runOptions.getParallelism();
 					LOG.debug("User parallelism is set to {}", userParallelism);
-					if (client.getMaxSlots() != MAX_SLOTS_UNKNOWN && userParallelism == -1) {
+					if (client.getMaxSlots() != MAX_SLOTS_UNKNOWN && userParallelism == -1) { //设置slot数量和并行度数量
 						logAndSysout("Using the parallelism provided by the remote cluster ("
 							+ client.getMaxSlots() + "). "
 							+ "To use another parallelism, set it at the ./bin/flink client.");
@@ -283,13 +283,12 @@ public class CliFrontend {
 					} else if (ExecutionConfig.PARALLELISM_DEFAULT == userParallelism) {
 						userParallelism = defaultParallelism;
 					}
-
-					executeProgram(program, client, userParallelism);
+					executeProgram(program, client, userParallelism); //向cluster提交job
 				} finally {
 					if (clusterId == null && !client.isDetached()) {
 						// terminate the cluster only if we have started it before and if it's not detached
 						try {
-							client.shutDownCluster();
+							client.shutDownCluster(); //非detached，关闭cluster
 						} catch (final Exception e) {
 							LOG.info("Could not properly terminate the Flink cluster.", e);
 						}
@@ -1121,9 +1120,9 @@ public class CliFrontend {
 				configuration,
 				customCommandLines);
 
-			SecurityUtils.install(new SecurityConfiguration(cli.configuration));
-			int retCode = SecurityUtils.getInstalledContext()
-					.runSecured(() -> cli.parseParameters(args));
+			SecurityUtils.install(new SecurityConfiguration(cli.configuration));  //加载Security相关配置，支持jaas, Hadoop's User Group Information (UGI),ZooKeeper's process-wide security settings
+			int retCode = SecurityUtils.getInstalledContext()     //HadoopSecurityContext或者NoOpSecurityContext,根据SecurityUtils.install结果决定
+					.runSecured(() -> cli.parseParameters(args));  //<T> T runSecured(Callable<T> securedCallable) throws Exception; 接受参数为callable函数
 			System.exit(retCode);
 		}
 		catch (Throwable t) {
@@ -1139,7 +1138,7 @@ public class CliFrontend {
 	// --------------------------------------------------------------------------------------------
 
 	public static String getConfigurationDirectoryFromEnv() {
-		String location = System.getenv(ConfigConstants.ENV_FLINK_CONF_DIR);
+		String location = System.getenv(ConfigConstants.ENV_FLINK_CONF_DIR);   //"FLINK_CONF_DIR" : /app/flink/conf
 
 		if (location != null) {
 			if (new File(location).exists()) {
@@ -1177,7 +1176,7 @@ public class CliFrontend {
 		config.setInteger(RestOptions.PORT, address.getPort());
 	}
 
-	public static List<CustomCommandLine<?>> loadCustomCommandLines(Configuration configuration, String configurationDirectory) {
+	public static List<CustomCommandLine<?>> loadCustomCommandLines(Configuration configuration, String configurationDirectory) {  //有两种cli， yarn和default
 		List<CustomCommandLine<?>> customCommandLines = new ArrayList<>(2);
 
 		//	Command line interface of the YARN session, with a special initialization here
@@ -1191,12 +1190,12 @@ public class CliFrontend {
 					configuration,
 					configurationDirectory,
 					"y",
-					"yarn"));
+					"yarn"));                //添加flinkYarnSessionCLI
 		} catch (NoClassDefFoundError | Exception e) {
 			LOG.warn("Could not load CLI class {}.", flinkYarnSessionCLI, e);
 		}
 
-		customCommandLines.add(new DefaultCLI(configuration));
+		customCommandLines.add(new DefaultCLI(configuration));  //添加DefaultCLI
 
 		return customCommandLines;
 	}
@@ -1227,7 +1226,7 @@ public class CliFrontend {
 	private static CustomCommandLine<?> loadCustomCommandLine(String className, Object... params) throws IllegalAccessException, InvocationTargetException, InstantiationException, ClassNotFoundException, NoSuchMethodException {
 
 		Class<? extends CustomCommandLine> customCliClass =
-			Class.forName(className).asSubclass(CustomCommandLine.class);
+			Class.forName(className).asSubclass(CustomCommandLine.class);   //生产CustomCommandLine接口的继承类
 
 		// construct class types from the parameters
 		Class<?>[] types = new Class<?>[params.length];
@@ -1236,9 +1235,9 @@ public class CliFrontend {
 			types[i] = params[i].getClass();
 		}
 
-		Constructor<? extends CustomCommandLine> constructor = customCliClass.getConstructor(types);
+		Constructor<? extends CustomCommandLine> constructor = customCliClass.getConstructor(types); //构建构造函数
 
-		return constructor.newInstance(params);
+		return constructor.newInstance(params); //由构造函数创建实例
 	}
 
 }
